@@ -3,6 +3,7 @@ const router = express.Router();
 const auth = require("../middleware/auth"); // Sesuaikan path jika perlu
 const mentorAuth = require("../middleware/mentorAuth"); // Sesuaikan path jika perlu
 const mentorController = require("../controllers/mentorController");
+const upload = require("../middleware/upload");
 
 // =======================================================
 // == RUTE UTAMA UNTUK ALUR PENJADWALAN BARU ==
@@ -44,9 +45,10 @@ router.get(
 );
 
 // Mengirim laporan sesi yang baru dibuat
+
 router.post(
   "/reports",
-  [auth, mentorAuth],
+  [auth, mentorAuth, upload.single("sessionMaterial")],
   mentorController.createSessionReport
 );
 

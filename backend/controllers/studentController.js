@@ -70,19 +70,25 @@ const studentController = {
       const studentId = req.user.id;
       const query = `
         SELECT 
-          sr.report_id, sr.summary, sr.student_development_journal,
           s.session_datetime,
-          u.full_name as mentor_name
+          u.full_name as mentor_name,
+          sr.summary, 
+          s.status,
+          sr.student_development_journal,
+          sr.material_url
         FROM session_reports sr
-        JOIN schedules s ON sr.schedule_id = s.schedule_id
-        JOIN users u ON sr.mentor_id = u.user_id
+        LEFT JOIN schedules s ON sr.schedule_id = s.schedule_id
+        LEFT JOIN users u ON sr.mentor_id = u.user_id
         WHERE sr.student_id = $1 AND sr.verified_by_admin = true
         ORDER BY s.session_datetime DESC;
       `;
       const { rows } = await pool.query(query, [studentId]);
       res.json(rows);
     } catch (error) {
-      console.error("Error mengambil riwayat laporan siswa:", error);
+      console.error(
+        "Error mengambil riwayat laporan siswa (Master Data):",
+        error
+      );
       res.status(500).json({ message: "Terjadi kesalahan pada server" });
     }
   },

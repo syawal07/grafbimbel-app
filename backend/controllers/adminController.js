@@ -196,11 +196,9 @@ const adminController = {
     try {
       await client.query("BEGIN");
       const { id } = req.params;
-      // Ambil data baru dari body
-      const { mentor_id, schedule_recommendation } = req.body;
+      const { mentor_id, schedule_recommendation } = req.body; // Pastikan ini ada
       const adminId = req.user.id;
 
-      // Validasi input
       if (!mentor_id || !schedule_recommendation) {
         throw new Error(
           "Anda harus memilih mentor dan mengisi rekomendasi jadwal."
@@ -220,12 +218,14 @@ const adminController = {
 
       const { user_package_id } = paymentResult.rows[0];
 
-      // Perbarui user_packages dengan mentor DAN rekomendasi jadwal
+      // --- BAGIAN PALING PENTING ADA DI SINI ---
+      // Pastikan query UPDATE Anda menyertakan schedule_recommendation = $2
       const packageQuery = `
       UPDATE user_packages 
       SET status = 'active', activation_date = NOW(), mentor_id = $1, schedule_recommendation = $2
       WHERE user_package_id = $3;
     `;
+      // Pastikan Anda mengirim semua 3 variabel ke query
       await client.query(packageQuery, [
         mentor_id,
         schedule_recommendation,
@@ -991,6 +991,87 @@ const adminController = {
       res.json(profileData);
     } catch (error) {
       console.error("Error mengambil profil siswa:", error);
+      res.status(500).json({ message: "Terjadi kesalahan pada server" });
+    }
+  },
+
+  async createOnDemandSchedule(req, res) {
+    try {
+      const { student_id, mentor_id, session_datetime } = req.body;
+
+      // Validasi input
+      if (!student_id || !mentor_id || !session_datetime) {
+        return res
+          .status(400)
+          .json({ message: "Siswa, mentor, dan waktu sesi wajib diisi." });
+      }
+
+      // Query untuk memasukkan jadwal baru tanpa user_package_id
+      const query = `
+      INSERT INTO schedules (student_id, mentor_id, session_datetime, status)
+      VALUES ($1, $2, $3, 'scheduled')
+      RETURNING *;
+    `;
+
+      const newSchedule = await pool.query(query, [
+        student_id,
+        mentor_id,
+        session_datetime,
+      ]);
+
+      res.status(201).json({
+        message: "Jadwal harian (on-demand) berhasil dibuat.",
+        schedule: newSchedule.rows[0],
+      });
+    } catch (error) {
+      console.error("Error membuat jadwal on-demand:", error);
+      res.status(500).json({ message: "Terjadi kesalahan pada server" });
+    }
+  },
+
+  async getMentorProfile(req, res) {
+    try {
+      const { id } = req.params; // Ini adalah user_id dari mentor
+
+      // 1. Ambil data dasar mentor
+      const mentorInfoPromise = pool.query(
+        "SELECT user_id, full_name, email, phone_number, salary_rate, payment_type FROM users WHERE user_id = $1 AND role = 'mentor'",
+        [id]
+      );
+
+      // 2. Ambil riwayat semua sesi yang diajar
+      const scheduleHistoryPromise = pool.query(
+        `SELECT 
+         s.schedule_id, 
+         s.session_datetime, 
+         s.status,
+         u.full_name AS student_name,
+         sr.payroll_status
+       FROM schedules s
+       LEFT JOIN users u ON s.student_id = u.user_id
+       LEFT JOIN session_reports sr ON s.schedule_id = sr.schedule_id
+       WHERE s.mentor_id = $1
+       ORDER BY s.session_datetime DESC`,
+        [id]
+      );
+
+      const [mentorInfoRes, scheduleHistoryRes] = await Promise.all([
+        mentorInfoPromise,
+        scheduleHistoryPromise,
+      ]);
+
+      if (mentorInfoRes.rows.length === 0) {
+        return res.status(404).json({ message: "Mentor tidak ditemukan." });
+      }
+
+      const profileData = {
+        mentor: mentorInfoRes.rows[0],
+        scheduleHistory: scheduleHistoryRes.rows,
+      };
+
+      res.json(profileData);
+    } catch (error) {
+      console.error("Error mengambil profil mentor:", error);
       res.status(500).json({ message: "Terjadi kesalahan pada server" });
     }
   },

@@ -20,6 +20,13 @@ router.get(
   [auth, adminAuth],
   adminController.getStudentProfile
 );
+
+router.get(
+  "/mentors/:id/profile",
+  [auth, adminAuth],
+  adminController.getMentorProfile
+);
+
 router.get(
   "/users/inactive",
   [auth, adminAuth],
@@ -122,6 +129,13 @@ router.put(
   "/payroll-daily/mark-paid/:report_id",
   [auth, adminAuth],
   adminController.markDailyPayrollAsPaid
+);
+
+// BARU: Rute untuk membuat jadwal harian (on-demand)
+router.post(
+  "/schedules/on-demand",
+  [auth, adminAuth], // atau middleware auth Anda
+  adminController.createOnDemandSchedule
 );
 
 module.exports = router;

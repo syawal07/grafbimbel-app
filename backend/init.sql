@@ -55,7 +55,7 @@ ALTER SEQUENCE public.payments_payment_id_seq OWNED BY public.payments.payment_i
 
 CREATE TABLE public.schedules (
     schedule_id integer NOT NULL,
-    user_package_id integer NOT NULL,
+    user_package_id integer,
     student_id integer NOT NULL,
     mentor_id integer,
     session_datetime timestamp with time zone NOT NULL,
@@ -87,6 +87,7 @@ CREATE TABLE public.session_reports (
     CONSTRAINT check_payroll_status CHECK (((payroll_status)::text = ANY ((ARRAY['unpaid'::character varying, 'paid'::character varying])::text[])))
 );
 ALTER TABLE public.session_reports OWNER TO postgres;
+ALTER TABLE public.session_reports ADD COLUMN material_url TEXT;
 
 CREATE SEQUENCE public.session_reports_report_id_seq AS integer START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1;
 ALTER SEQUENCE public.session_reports_report_id_seq OWNER TO postgres;

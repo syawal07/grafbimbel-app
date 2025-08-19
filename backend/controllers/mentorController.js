@@ -202,24 +202,26 @@ const mentorController = {
         student_attended,
       } = req.body;
 
+      // --- PERUBAHAN 1: Ambil path file dari req.file ---
+      const material_url = req.file ? req.file.path.replace(/\\/g, "/") : null;
+
       if (!schedule_id || !summary) {
         return res
           .status(400)
           .json({ message: "Jadwal sesi dan rangkuman wajib diisi." });
       }
 
-      // Cek apakah laporan sudah ada
       const existingReport = await pool.query(
         "SELECT report_id FROM session_reports WHERE schedule_id = $1",
         [schedule_id]
       );
+
       if (existingReport.rows.length > 0) {
         return res.status(409).json({
           message: "Laporan untuk sesi ini sudah pernah dibuat sebelumnya.",
         });
       }
 
-      // Verifikasi jadwal dan ambil student_id
       const scheduleData = await pool.query(
         "SELECT student_id FROM schedules WHERE schedule_id = $1 AND mentor_id = $2",
         [schedule_id, mentorId]
@@ -231,11 +233,12 @@ const mentorController = {
       }
       const student_id = scheduleData.rows[0].student_id;
 
+      // --- PERUBAHAN 2: Tambahkan kolom dan value material_url ke query INSERT ---
       const query = `
-        INSERT INTO session_reports (schedule_id, mentor_id, student_id, summary, student_development_journal, student_attended)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING *;
-      `;
+      INSERT INTO session_reports (schedule_id, mentor_id, student_id, summary, student_development_journal, student_attended, material_url)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING *;
+    `;
       const newReport = await pool.query(query, [
         schedule_id,
         mentorId,
@@ -243,6 +246,7 @@ const mentorController = {
         summary,
         student_development_journal,
         student_attended,
+        material_url, // <-- Value baru
       ]);
 
       res.status(201).json({
