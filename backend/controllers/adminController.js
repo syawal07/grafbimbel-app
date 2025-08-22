@@ -6,29 +6,28 @@ const adminController = {
   // --- FUNGSI UNTUK PENGGUNA ---
   async getAllUsers(req, res) {
     try {
-      // Query ini diubah untuk mencegah duplikasi data pengguna
-      const query = `
+      const { role, search } = req.query;
+      let query = `
         SELECT DISTINCT ON (u.user_id)
-          u.user_id, 
-          u.full_name, 
-          u.email, 
-          u.role, 
-          u.phone_number, 
-          u.created_at,
+          u.user_id, u.full_name, u.email, u.role, u.phone_number, u.created_at,
           up.remaining_sessions,
           p.total_sessions
-        FROM 
-          users u
-        LEFT JOIN 
-          user_packages up ON u.user_id = up.student_id AND up.status = 'active'
-        LEFT JOIN
-          packages p ON up.package_id = p.package_id
-        WHERE 
-          u.role != 'admin' 
-        ORDER BY 
-          u.user_id, up.purchase_date DESC;
+        FROM users u
+        LEFT JOIN user_packages up ON u.user_id = up.student_id AND up.status = 'active'
+        LEFT JOIN packages p ON up.package_id = p.package_id
+        WHERE u.role != 'admin'
       `;
-      const { rows } = await pool.query(query);
+      const queryParams = [];
+      if (role) {
+        queryParams.push(role);
+        query += ` AND u.role = $${queryParams.length}`;
+      }
+      if (search) {
+        queryParams.push(`%${search}%`);
+        query += ` AND u.full_name ILIKE $${queryParams.length}`;
+      }
+      query += ` ORDER BY u.user_id, up.purchase_date DESC;`;
+      const { rows } = await pool.query(query, queryParams);
       res.json(rows);
     } catch (error) {
       console.error("Error mengambil data semua user:", error);
@@ -44,10 +43,8 @@ const adminController = {
         password,
         role,
         phone_number,
-        salary_rate,
-        payment_type,
+        payment_type, // salary_rate dihapus
       } = req.body;
-      // ... (sisa kode validasi if-else tetap sama) ...
       if (!full_name || !email || !password || !role) {
         return res
           .status(400)
@@ -64,8 +61,8 @@ const adminController = {
       const password_hash = await bcrypt.hash(password, salt);
 
       const query = `
-        INSERT INTO users (full_name, email, password_hash, role, phone_number, salary_rate, payment_type)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        INSERT INTO users (full_name, email, password_hash, role, phone_number, payment_type)
+        VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING user_id, full_name, email, role;
       `;
       const newUser = await pool.query(query, [
@@ -74,7 +71,6 @@ const adminController = {
         password_hash,
         role,
         phone_number,
-        salary_rate || 0,
         payment_type || "monthly",
       ]);
       res
@@ -110,10 +106,8 @@ const adminController = {
         email,
         role,
         phone_number,
-        salary_rate,
-        payment_type,
+        payment_type, // salary_rate dihapus
       } = req.body;
-      // ... (sisa kode validasi if-else tetap sama) ...
       if (!full_name || !email || !role) {
         return res
           .status(400)
@@ -121,8 +115,8 @@ const adminController = {
       }
       const query = `
         UPDATE users 
-        SET full_name = $1, email = $2, role = $3, phone_number = $4, salary_rate = $5, payment_type = $6
-        WHERE user_id = $7
+        SET full_name = $1, email = $2, role = $3, phone_number = $4, payment_type = $5
+        WHERE user_id = $6
         RETURNING user_id, full_name, email, role;
       `;
       const updatedUser = await pool.query(query, [
@@ -130,7 +124,6 @@ const adminController = {
         email,
         role,
         phone_number,
-        salary_rate || 0,
         payment_type || "monthly",
         id,
       ]);
@@ -174,7 +167,7 @@ const adminController = {
   async getPendingPayments(req, res) {
     try {
       const query = `
-        SELECT p.payment_id, p.amount, p.payment_proof_url, p.payment_date,
+        SELECT p.payment_id, p.amount, p.payment_proof_url, p.payment_date, p.student_id,
                u.full_name as student_name, pkg.package_name
         FROM payments p
         JOIN users u ON p.student_id = u.user_id
@@ -196,12 +189,12 @@ const adminController = {
     try {
       await client.query("BEGIN");
       const { id } = req.params;
-      const { mentor_id, schedule_recommendation } = req.body; // Pastikan ini ada
+      const { mentor_id, schedule_recommendation, session_rate } = req.body;
       const adminId = req.user.id;
 
-      if (!mentor_id || !schedule_recommendation) {
+      if (!mentor_id || !schedule_recommendation || !session_rate) {
         throw new Error(
-          "Anda harus memilih mentor dan mengisi rekomendasi jadwal."
+          "Anda harus memilih mentor, mengisi rekomendasi jadwal, dan menentukan tarif sesi."
         );
       }
 
@@ -218,17 +211,15 @@ const adminController = {
 
       const { user_package_id } = paymentResult.rows[0];
 
-      // --- BAGIAN PALING PENTING ADA DI SINI ---
-      // Pastikan query UPDATE Anda menyertakan schedule_recommendation = $2
       const packageQuery = `
       UPDATE user_packages 
-      SET status = 'active', activation_date = NOW(), mentor_id = $1, schedule_recommendation = $2
-      WHERE user_package_id = $3;
+      SET status = 'active', activation_date = NOW(), mentor_id = $1, schedule_recommendation = $2, session_rate = $3
+      WHERE user_package_id = $4;
     `;
-      // Pastikan Anda mengirim semua 3 variabel ke query
       await client.query(packageQuery, [
         mentor_id,
         schedule_recommendation,
+        session_rate,
         user_package_id,
       ]);
 
@@ -248,32 +239,47 @@ const adminController = {
     }
   },
 
+  async getStudentDetails(req, res) {
+    try {
+      const { id } = req.params;
+      const query =
+        "SELECT user_id, full_name, email, phone_number FROM users WHERE user_id = $1";
+      const { rows } = await pool.query(query, [id]);
+
+      if (rows.length === 0) {
+        return res.status(404).json({ message: "Siswa tidak ditemukan." });
+      }
+      res.json(rows[0]);
+    } catch (error) {
+      console.error("Error mengambil detail siswa:", error);
+      res.status(500).json({ message: "Terjadi kesalahan pada server." });
+    }
+  },
+
   // --- FUNGSI UNTUK JADWAL ---
   async getGlobalSchedule(req, res) {
     try {
-      const query = `
+      const { startDate, endDate } = req.query;
+      let query = `
       SELECT 
-        s.schedule_id,
-        s.session_datetime,
-        s.status,
-        s.zoom_link,
+        s.schedule_id, s.session_datetime, s.status, s.zoom_link,
         student.full_name AS student_name,
         mentor.full_name AS mentor_name,
-        p.package_name AS package_name
-      FROM 
-        schedules s
-      LEFT JOIN 
-        users student ON s.student_id = student.user_id
-      LEFT JOIN 
-        users mentor ON s.mentor_id = mentor.user_id
-      LEFT JOIN
-        user_packages up ON s.user_package_id = up.user_package_id
-      LEFT JOIN
-        packages p ON up.package_id = p.package_id
-      ORDER BY 
-        s.session_datetime DESC;
+        p.package_name
+      FROM schedules s
+      LEFT JOIN users student ON s.student_id = student.user_id
+      LEFT JOIN users mentor ON s.mentor_id = mentor.user_id
+      LEFT JOIN user_packages up ON s.user_package_id = up.user_package_id
+      LEFT JOIN packages p ON up.package_id = p.package_id
     `;
-      const { rows } = await pool.query(query);
+      const queryParams = [];
+      if (startDate && endDate) {
+        queryParams.push(startDate);
+        queryParams.push(endDate);
+        query += ` WHERE s.session_datetime BETWEEN $1 AND $2`;
+      }
+      query += ` ORDER BY s.session_datetime DESC;`;
+      const { rows } = await pool.query(query, queryParams);
       res.json(rows);
     } catch (error) {
       console.error("Error mengambil jadwal global:", error);
@@ -285,24 +291,16 @@ const adminController = {
     try {
       const query = `
         SELECT 
-          s.schedule_id,
-          s.user_package_id,
-          s.student_id,
+          s.schedule_id, s.user_package_id, s.student_id,
           u.full_name AS student_name,
           p.package_name,
-          s.session_datetime -- TAMBAHKAN BARIS INI
-        FROM 
-          schedules s
-        JOIN 
-          users u ON s.student_id = u.user_id
-        JOIN 
-          user_packages up ON s.user_package_id = up.user_package_id
-        JOIN
-          packages p ON up.package_id = p.package_id
-        WHERE 
-          s.status = 'pending_approval'
-        ORDER BY 
-          s.created_at ASC;
+          s.session_datetime
+        FROM schedules s
+        JOIN users u ON s.student_id = u.user_id
+        JOIN user_packages up ON s.user_package_id = up.user_package_id
+        JOIN packages p ON up.package_id = p.package_id
+        WHERE s.status = 'pending_approval'
+        ORDER BY s.created_at ASC;
       `;
       const { rows } = await pool.query(query);
       res.json(rows);
@@ -399,7 +397,6 @@ const adminController = {
           .status(400)
           .json({ message: "Mentor dan waktu sesi wajib diisi." });
       }
-      // Query ini sekarang juga mengubah status menjadi 'scheduled'
       const query = `
         UPDATE schedules 
         SET mentor_id = $1, session_datetime = $2, status = 'scheduled'
@@ -420,25 +417,6 @@ const adminController = {
       });
     } catch (error) {
       console.error("Error update jadwal:", error);
-      res.status(500).json({ message: "Terjadi kesalahan pada server" });
-    }
-  },
-
-  async getWeeklyScheduleView(req, res) {
-    try {
-      const query = `
-        SELECT s.schedule_id, s.session_datetime, m.user_id as mentor_id,
-               m.full_name as mentor_name, st.full_name as student_name
-        FROM schedules s
-        JOIN users m ON s.mentor_id = m.user_id
-        JOIN users st ON s.student_id = st.user_id
-        WHERE s.session_datetime >= date_trunc('week', NOW()) 
-          AND s.session_datetime < date_trunc('week', NOW()) + interval '7 day';
-      `;
-      const { rows } = await pool.query(query);
-      res.json(rows);
-    } catch (error) {
-      console.error("Error mengambil data jadwal mingguan:", error);
       res.status(500).json({ message: "Terjadi kesalahan pada server" });
     }
   },
@@ -500,16 +478,18 @@ const adminController = {
         "SELECT user_package_id FROM schedules WHERE schedule_id = $1",
         [schedule_id]
       );
-      if (scheduleResult.rows.length === 0) {
-        throw new Error("Jadwal terkait laporan tidak ditemukan.");
+      if (
+        scheduleResult.rows.length > 0 &&
+        scheduleResult.rows[0].user_package_id
+      ) {
+        const { user_package_id } = scheduleResult.rows[0];
+        const deductSessionQuery = `
+          UPDATE user_packages
+          SET remaining_sessions = remaining_sessions - 1
+          WHERE user_package_id = $1 AND remaining_sessions > 0;
+        `;
+        await client.query(deductSessionQuery, [user_package_id]);
       }
-      const { user_package_id } = scheduleResult.rows[0];
-      const deductSessionQuery = `
-        UPDATE user_packages
-        SET remaining_sessions = remaining_sessions - 1
-        WHERE user_package_id = $1 AND remaining_sessions > 0;
-      `;
-      await client.query(deductSessionQuery, [user_package_id]);
       await client.query("COMMIT");
       res.json({
         message: "Laporan berhasil diverifikasi dan sisa sesi telah dikurangi.",
@@ -721,76 +701,254 @@ const adminController = {
       res.status(500).json({ message: "Terjadi kesalahan pada server" });
     }
   },
-  // --- TAMBAHKAN FUNGSI BARU DI BAWAH INI ---
+
   async getPayrollReport(req, res) {
+    // Untuk Gaji Bulanan
     try {
       const { startDate, endDate } = req.query;
-
       if (!startDate || !endDate) {
         return res.status(400).json({
           message: "Rentang tanggal (startDate dan endDate) wajib diisi.",
         });
       }
-
-      // Query ini akan menggabungkan data mentor dengan jumlah sesi terverifikasi mereka
-      // dalam rentang tanggal yang diberikan.
       const query = `
-      SELECT
-        u.user_id AS mentor_id,
-        u.full_name,
-        u.salary_rate,
-        COUNT(sr.report_id) AS verified_sessions,
-        (u.salary_rate * COUNT(sr.report_id)) AS total_salary
-      FROM
-        users u
-      LEFT JOIN
-        session_reports sr ON u.user_id = sr.mentor_id
-                           AND sr.verified_by_admin = true
-                           AND sr.created_at >= $1
-                           AND sr.created_at <= $2
-      WHERE
-        u.role = 'mentor'
-      GROUP BY
-        u.user_id, u.full_name, u.salary_rate
-      ORDER BY
-        u.full_name ASC;
-    `;
-
+            SELECT
+                u.user_id AS mentor_id,
+                u.full_name,
+                COUNT(sr.report_id) AS verified_sessions,
+                SUM(COALESCE(up.session_rate, s.session_rate)) AS total_salary
+            FROM
+                users u
+            JOIN
+                session_reports sr ON u.user_id = sr.mentor_id
+            JOIN
+                schedules s ON sr.schedule_id = s.schedule_id
+            LEFT JOIN
+                user_packages up ON s.user_package_id = up.user_package_id
+            WHERE
+                u.role = 'mentor' AND u.payment_type = 'monthly'
+                AND sr.verified_by_admin = true
+                AND s.session_datetime BETWEEN $1 AND $2
+            GROUP BY
+                u.user_id, u.full_name
+            ORDER BY
+                u.full_name ASC;
+        `;
       const { rows } = await pool.query(query, [startDate, endDate]);
       res.json(rows);
     } catch (error) {
-      console.error("Error mengambil laporan gaji:", error);
+      console.error("Error mengambil laporan gaji bulanan:", error);
       res.status(500).json({ message: "Terjadi kesalahan pada server" });
     }
   },
 
   async getDailyPayroll(req, res) {
+    // Untuk Gaji Harian
+    try {
+      const { startDate, endDate } = req.query;
+      let query = `
+            SELECT
+                sr.report_id,
+                sr.created_at AS report_date,
+                u.user_id AS mentor_id,
+                u.full_name,
+                s.session_datetime,
+                COALESCE(up.session_rate, s.session_rate) AS session_rate
+            FROM
+                session_reports sr
+            JOIN
+                users u ON sr.mentor_id = u.user_id
+            JOIN
+                schedules s ON sr.schedule_id = s.schedule_id
+            LEFT JOIN
+                user_packages up ON s.user_package_id = up.user_package_id
+            WHERE
+                u.payment_type = 'daily'
+                AND sr.verified_by_admin = true
+                AND sr.payroll_status = 'unpaid'
+        `;
+      const queryParams = [];
+      if (startDate && endDate) {
+        queryParams.push(startDate);
+        queryParams.push(endDate);
+        query += ` AND s.session_datetime BETWEEN $1 AND $2`;
+      }
+      query += ` ORDER BY u.full_name, s.session_datetime;`;
+      const { rows } = await pool.query(query, queryParams);
+      res.json(rows);
+    } catch (error) {
+      console.error("Error mengambil data gaji harian:", error);
+      res.status(500).json({ message: "Terjadi kesalahan pada server" });
+    }
+  },
+
+  async getInactiveStudents(req, res) {
     try {
       const query = `
-        SELECT
-          sr.report_id,
-          sr.created_at AS report_date,
-          u.user_id AS mentor_id,
-          u.full_name,
-          u.salary_rate,
-          s.session_datetime
-        FROM
-          session_reports sr
-        JOIN
-          users u ON sr.mentor_id = u.user_id
-        JOIN
-          schedules s ON sr.schedule_id = s.schedule_id
-        WHERE
-          u.payment_type = 'daily'
-          AND sr.verified_by_admin = true
-          AND sr.payroll_status = 'unpaid'
-        ORDER BY
-          u.full_name, s.session_datetime;
+        SELECT 
+          u.user_id, u.full_name, u.email, u.phone_number,
+          up.status AS package_status
+        FROM users u
+        JOIN user_packages up ON u.user_id = up.student_id
+        WHERE u.role = 'siswa' AND up.status IN ('completed', 'expired')
+        ORDER BY u.full_name ASC;
       `;
       const { rows } = await pool.query(query);
       res.json(rows);
     } catch (error) {
-      console.error("Error mengambil data gaji harian:", error);
+      console.error("Error mengambil data siswa paket habis:", error);
+      res.status(500).json({ message: "Terjadi kesalahan pada server" });
+    }
+  },
+
+  async getStudentProfile(req, res) {
+    try {
+      const { id } = req.params;
+      const studentInfoPromise = pool.query(
+        "SELECT user_id, full_name, email, phone_number, created_at FROM users WHERE user_id = $1 AND role = 'siswa'",
+        [id]
+      );
+      const packageHistoryPromise = pool.query(
+        `SELECT up.user_package_id, p.package_name, up.status, up.remaining_sessions, p.total_sessions
+       FROM user_packages up
+       JOIN packages p ON up.package_id = p.package_id
+       WHERE up.student_id = $1
+       ORDER BY up.purchase_date DESC`,
+        [id]
+      );
+      const sessionHistoryPromise = pool.query(
+        `SELECT s.schedule_id, s.session_datetime, u.full_name AS mentor_name, sr.summary
+       FROM schedules s
+       JOIN users u ON s.mentor_id = u.user_id
+       LEFT JOIN session_reports sr ON s.schedule_id = sr.schedule_id AND sr.verified_by_admin = true
+       WHERE s.student_id = $1 AND s.status != 'pending_approval'
+       ORDER BY s.session_datetime DESC`,
+        [id]
+      );
+      const [studentInfoRes, packageHistoryRes, sessionHistoryRes] =
+        await Promise.all([
+          studentInfoPromise,
+          packageHistoryPromise,
+          sessionHistoryPromise,
+        ]);
+      if (studentInfoRes.rows.length === 0) {
+        return res.status(404).json({ message: "Siswa tidak ditemukan." });
+      }
+      const profileData = {
+        student: studentInfoRes.rows[0],
+        packageHistory: packageHistoryRes.rows,
+        sessionHistory: sessionHistoryRes.rows,
+      };
+      res.json(profileData);
+    } catch (error) {
+      console.error("Error mengambil profil siswa:", error);
+      res.status(500).json({ message: "Terjadi kesalahan pada server" });
+    }
+  },
+
+  async createOnDemandSchedule(req, res) {
+    try {
+      const { student_id, mentor_id, session_datetime, session_rate, mapel } =
+        req.body;
+      if (
+        !student_id ||
+        !mentor_id ||
+        !session_datetime ||
+        !session_rate ||
+        !mapel
+      ) {
+        return res.status(400).json({ message: "Semua field wajib diisi." });
+      }
+      const query = `
+      INSERT INTO schedules (student_id, mentor_id, session_datetime, status, session_rate, mapel)
+      VALUES ($1, $2, $3, 'scheduled', $4, $5)
+      RETURNING *;
+    `;
+      const newSchedule = await pool.query(query, [
+        student_id,
+        mentor_id,
+        session_datetime,
+        session_rate,
+        mapel,
+      ]);
+      res.status(201).json({
+        message: "Jadwal harian (on-demand) berhasil dibuat.",
+        schedule: newSchedule.rows[0],
+      });
+    } catch (error) {
+      console.error("Error membuat jadwal on-demand:", error);
+      res.status(500).json({ message: "Terjadi kesalahan pada server" });
+    }
+  },
+
+  async getMentorProfile(req, res) {
+    try {
+      const { id } = req.params;
+      const mentorInfoPromise = pool.query(
+        `SELECT 
+          u.user_id, u.full_name, u.email, u.phone_number, u.payment_type,
+          mp.* FROM users u
+        LEFT JOIN mentor_profiles mp ON u.user_id = mp.mentor_id
+        WHERE u.user_id = $1 AND u.role = 'mentor'`,
+        [id]
+      );
+      const scheduleHistoryPromise = pool.query(
+        `SELECT 
+           s.schedule_id, s.session_datetime, s.status,
+           u.full_name AS student_name,
+           COALESCE(up.session_rate, s.session_rate) AS session_rate,
+           sr.payroll_status
+         FROM schedules s
+         LEFT JOIN users u ON s.student_id = u.user_id
+         LEFT JOIN user_packages up ON s.user_package_id = up.user_package_id
+         LEFT JOIN session_reports sr ON s.schedule_id = sr.schedule_id
+         WHERE s.mentor_id = $1
+         ORDER BY s.session_datetime DESC`,
+        [id]
+      );
+      const [mentorInfoRes, scheduleHistoryRes] = await Promise.all([
+        mentorInfoPromise,
+        scheduleHistoryPromise,
+      ]);
+      if (mentorInfoRes.rows.length === 0) {
+        return res.status(404).json({ message: "Mentor tidak ditemukan." });
+      }
+      const profileData = {
+        mentor: mentorInfoRes.rows[0],
+        scheduleHistory: scheduleHistoryRes.rows,
+      };
+      res.json(profileData);
+    } catch (error) {
+      console.error("Error mengambil profil mentor:", error);
+      res.status(500).json({ message: "Terjadi kesalahan pada server" });
+    }
+  },
+
+  async changeMentor(req, res) {
+    try {
+      const { id } = req.params;
+      const { new_mentor_id } = req.body;
+      if (!new_mentor_id) {
+        return res.status(400).json({ message: "Mentor baru wajib dipilih." });
+      }
+      const query = `
+      UPDATE user_packages
+      SET mentor_id = $1
+      WHERE user_package_id = $2
+      RETURNING *;
+    `;
+      const result = await pool.query(query, [new_mentor_id, id]);
+      if (result.rows.length === 0) {
+        return res
+          .status(404)
+          .json({ message: "Paket siswa tidak ditemukan." });
+      }
+      res.json({
+        message: "Mentor berhasil diganti.",
+        updatedPackage: result.rows[0],
+      });
+    } catch (error) {
+      console.error("Error saat mengganti mentor:", error);
       res.status(500).json({ message: "Terjadi kesalahan pada server" });
     }
   },
@@ -818,260 +976,6 @@ const adminController = {
       });
     } catch (error) {
       console.error("Error menandai gaji harian:", error);
-      res.status(500).json({ message: "Terjadi kesalahan pada server" });
-    }
-  },
-
-  // --- TAMBAHKAN FUNGSI BARU DI BAWAH INI ---
-  async getDailySchedules(req, res) {
-    try {
-      const { date } = req.query; // Mengambil tanggal dari query parameter, format: YYYY-MM-DD
-
-      if (!date) {
-        return res
-          .status(400)
-          .json({ message: "Parameter tanggal wajib diisi." });
-      }
-
-      const query = `
-      SELECT
-        s.schedule_id,
-        s.session_datetime,
-        u_student.full_name AS student_name,
-        u_mentor.user_id AS mentor_id,
-        u_mentor.full_name AS mentor_name
-      FROM
-        schedules s
-      JOIN
-        users u_student ON s.student_id = u_student.user_id
-      JOIN
-        users u_mentor ON s.mentor_id = u_mentor.user_id
-      WHERE
-        s.session_datetime::date = $1
-      ORDER BY
-        s.session_datetime ASC;
-    `;
-
-      const { rows } = await pool.query(query, [date]);
-      res.json(rows);
-    } catch (error) {
-      console.error("Error mengambil jadwal harian:", error);
-      res.status(500).json({ message: "Terjadi kesalahan pada server" });
-    }
-  },
-  // --- TAMBAHKAN FUNGSI BARU DI BAWAH INI ---
-  async getTutorProfile(req, res) {
-    try {
-      const { id } = req.params; // ID Mentor
-
-      // 1. Ambil data dasar mentor
-      const mentorInfoPromise = pool.query(
-        "SELECT user_id, full_name, email, salary_rate, payment_type FROM users WHERE user_id = $1 AND role = 'mentor'",
-        [id]
-      );
-
-      // 2. Ambil riwayat semua sesi yang diajar
-      const scheduleHistoryPromise = pool.query(
-        `SELECT s.schedule_id, s.session_datetime, u.full_name AS student_name, s.status
-       FROM schedules s
-       JOIN users u ON s.student_id = u.user_id
-       WHERE s.mentor_id = $1
-       ORDER BY s.session_datetime DESC`,
-        [id]
-      );
-
-      // 3. Ambil sesi terverifikasi yang belum dibayar gajinya
-      const unpaidSessionsPromise = pool.query(
-        `SELECT sr.report_id, s.session_datetime, u.full_name AS student_name
-       FROM session_reports sr
-       JOIN schedules s ON sr.schedule_id = s.schedule_id
-       JOIN users u ON s.student_id = u.user_id
-       WHERE sr.mentor_id = $1 AND sr.verified_by_admin = true AND sr.payroll_status = 'unpaid'`,
-        [id]
-      );
-
-      const [mentorInfoRes, scheduleHistoryRes, unpaidSessionsRes] =
-        await Promise.all([
-          mentorInfoPromise,
-          scheduleHistoryPromise,
-          unpaidSessionsPromise,
-        ]);
-
-      if (mentorInfoRes.rows.length === 0) {
-        return res.status(404).json({ message: "Mentor tidak ditemukan." });
-      }
-
-      const profileData = {
-        mentor: mentorInfoRes.rows[0],
-        scheduleHistory: scheduleHistoryRes.rows,
-        unpaidSessions: unpaidSessionsRes.rows,
-      };
-
-      res.json(profileData);
-    } catch (error) {
-      console.error("Error mengambil profil tutor:", error);
-      res.status(500).json({ message: "Terjadi kesalahan pada server" });
-    }
-  },
-  async getInactiveStudents(req, res) {
-    try {
-      // Query ini sekarang juga mengambil nomor telepon
-      const query = `
-        SELECT 
-          u.user_id, 
-          u.full_name, 
-          u.email,
-          u.phone_number, -- PERUBAHAN ADA DI SINI
-          up.status AS package_status
-        FROM 
-          users u
-        JOIN 
-          user_packages up ON u.user_id = up.student_id
-        WHERE 
-          u.role = 'siswa' AND up.status IN ('completed', 'expired')
-        ORDER BY 
-          u.full_name ASC;
-      `;
-      const { rows } = await pool.query(query);
-      res.json(rows);
-    } catch (error) {
-      console.error("Error mengambil data siswa paket habis:", error);
-      res.status(500).json({ message: "Terjadi kesalahan pada server" });
-    }
-  },
-  // --- TAMBAHKAN FUNGSI BARU DI BAWAH INI ---
-  async getStudentProfile(req, res) {
-    try {
-      // Pastikan Anda mengambil '{ id }'
-      const { id } = req.params;
-      // 1. Ambil data dasar siswa
-      const studentInfoPromise = pool.query(
-        "SELECT user_id, full_name, email, phone_number, created_at FROM users WHERE user_id = $1 AND role = 'siswa'",
-        [id]
-      );
-
-      // 2. Ambil riwayat semua paket
-      const packageHistoryPromise = pool.query(
-        `SELECT up.user_package_id, p.package_name, up.status, up.remaining_sessions, p.total_sessions
-       FROM user_packages up
-       JOIN packages p ON up.package_id = p.package_id
-       WHERE up.student_id = $1
-       ORDER BY up.purchase_date DESC`,
-        [id]
-      );
-
-      // 3. Ambil riwayat semua sesi
-      const sessionHistoryPromise = pool.query(
-        `SELECT s.schedule_id, s.session_datetime, u.full_name AS mentor_name, sr.summary
-       FROM schedules s
-       JOIN users u ON s.mentor_id = u.user_id
-       LEFT JOIN session_reports sr ON s.schedule_id = sr.schedule_id AND sr.verified_by_admin = true
-       WHERE s.student_id = $1 AND s.status != 'pending_approval'
-       ORDER BY s.session_datetime DESC`,
-        [id]
-      );
-
-      const [studentInfoRes, packageHistoryRes, sessionHistoryRes] =
-        await Promise.all([
-          studentInfoPromise,
-          packageHistoryPromise,
-          sessionHistoryPromise,
-        ]);
-
-      if (studentInfoRes.rows.length === 0) {
-        return res.status(404).json({ message: "Siswa tidak ditemukan." });
-      }
-
-      const profileData = {
-        student: studentInfoRes.rows[0],
-        packageHistory: packageHistoryRes.rows,
-        sessionHistory: sessionHistoryRes.rows,
-      };
-
-      res.json(profileData);
-    } catch (error) {
-      console.error("Error mengambil profil siswa:", error);
-      res.status(500).json({ message: "Terjadi kesalahan pada server" });
-    }
-  },
-
-  async createOnDemandSchedule(req, res) {
-    try {
-      const { student_id, mentor_id, session_datetime } = req.body;
-
-      // Validasi input
-      if (!student_id || !mentor_id || !session_datetime) {
-        return res
-          .status(400)
-          .json({ message: "Siswa, mentor, dan waktu sesi wajib diisi." });
-      }
-
-      // Query untuk memasukkan jadwal baru tanpa user_package_id
-      const query = `
-      INSERT INTO schedules (student_id, mentor_id, session_datetime, status)
-      VALUES ($1, $2, $3, 'scheduled')
-      RETURNING *;
-    `;
-
-      const newSchedule = await pool.query(query, [
-        student_id,
-        mentor_id,
-        session_datetime,
-      ]);
-
-      res.status(201).json({
-        message: "Jadwal harian (on-demand) berhasil dibuat.",
-        schedule: newSchedule.rows[0],
-      });
-    } catch (error) {
-      console.error("Error membuat jadwal on-demand:", error);
-      res.status(500).json({ message: "Terjadi kesalahan pada server" });
-    }
-  },
-
-  async getMentorProfile(req, res) {
-    try {
-      const { id } = req.params; // Ini adalah user_id dari mentor
-
-      // 1. Ambil data dasar mentor
-      const mentorInfoPromise = pool.query(
-        "SELECT user_id, full_name, email, phone_number, salary_rate, payment_type FROM users WHERE user_id = $1 AND role = 'mentor'",
-        [id]
-      );
-
-      // 2. Ambil riwayat semua sesi yang diajar
-      const scheduleHistoryPromise = pool.query(
-        `SELECT 
-         s.schedule_id, 
-         s.session_datetime, 
-         s.status,
-         u.full_name AS student_name,
-         sr.payroll_status
-       FROM schedules s
-       LEFT JOIN users u ON s.student_id = u.user_id
-       LEFT JOIN session_reports sr ON s.schedule_id = sr.schedule_id
-       WHERE s.mentor_id = $1
-       ORDER BY s.session_datetime DESC`,
-        [id]
-      );
-
-      const [mentorInfoRes, scheduleHistoryRes] = await Promise.all([
-        mentorInfoPromise,
-        scheduleHistoryPromise,
-      ]);
-
-      if (mentorInfoRes.rows.length === 0) {
-        return res.status(404).json({ message: "Mentor tidak ditemukan." });
-      }
-
-      const profileData = {
-        mentor: mentorInfoRes.rows[0],
-        scheduleHistory: scheduleHistoryRes.rows,
-      };
-
-      res.json(profileData);
-    } catch (error) {
-      console.error("Error mengambil profil mentor:", error);
       res.status(500).json({ message: "Terjadi kesalahan pada server" });
     }
   },

@@ -2,6 +2,7 @@
   "dependencies": {
     "date-fns": "^4.1.0",
     "multer": "^2.0.2",
-    "react-csv": "^2.2.2"
+    "react-csv": "^2.2.2",
+    "use-debounce": "^10.0.5"
   }
 }

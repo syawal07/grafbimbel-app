@@ -1,9 +1,11 @@
-// backend/routes/adminRoutes.js (Versi Revisi Final)
+// backend/routes/adminRoutes.js (Versi Final yang Dirapikan)
 const express = require("express");
 const router = express.Router();
 const auth = require("../middleware/auth");
 const adminAuth = require("../middleware/adminAuth");
 const adminController = require("../controllers/adminController");
+const contentController = require("../controllers/contentController");
+
 
 // --- Routes untuk Ringkasan ---
 router.get(
@@ -16,17 +18,20 @@ router.get(
 router.get("/users", [auth, adminAuth], adminController.getAllUsers);
 router.post("/users", [auth, adminAuth], adminController.createUser);
 router.get(
+  "/users/:id/details",
+  [auth, adminAuth],
+  adminController.getStudentDetails
+);
+router.get(
   "/users/student-profile/:id",
   [auth, adminAuth],
   adminController.getStudentProfile
 );
-
 router.get(
   "/mentors/:id/profile",
   [auth, adminAuth],
   adminController.getMentorProfile
 );
-
 router.get(
   "/users/inactive",
   [auth, adminAuth],
@@ -49,27 +54,22 @@ router.put(
 );
 
 // --- Routes untuk Jadwal ---
-
-// BARU: Rute utama untuk mengambil semua jadwal (Jadwal Global)
 router.get("/schedules", [auth, adminAuth], adminController.getGlobalSchedule);
-
+router.post(
+  "/schedules/on-demand",
+  [auth, adminAuth],
+  adminController.createOnDemandSchedule
+);
 router.get(
   "/schedules/requests",
   [auth, adminAuth],
   adminController.getScheduleRequests
 );
-router.get(
-  "/schedules/by-date",
-  [auth, adminAuth],
-  adminController.getDailySchedules
-);
-router.get(
-  "/tutors/:id/profile",
-  [auth, adminAuth],
-  adminController.getTutorProfile
-);
-
-// Route dinamis di paling bawah grupnya
+// router.get(
+//   "/schedules/by-date",
+//   [auth, adminAuth],
+//   adminController.getDailySchedules
+// );
 router.get(
   "/schedules/:id",
   [auth, adminAuth],
@@ -101,6 +101,11 @@ router.put(
 // --- Routes untuk Paket Bimbel ---
 router.get("/packages", [auth, adminAuth], adminController.getAllPackages);
 router.post("/packages", [auth, adminAuth], adminController.createPackage);
+router.put(
+  "/user-packages/:id/change-mentor",
+  [auth, adminAuth],
+  adminController.changeMentor
+);
 router.get("/packages/:id", [auth, adminAuth], adminController.getPackageById);
 router.put("/packages/:id", [auth, adminAuth], adminController.updatePackage);
 router.delete(
@@ -125,17 +130,20 @@ router.get(
   [auth, adminAuth],
   adminController.getDailyPayroll
 );
+
 router.put(
   "/payroll-daily/mark-paid/:report_id",
   [auth, adminAuth],
   adminController.markDailyPayrollAsPaid
 );
 
-// BARU: Rute untuk membuat jadwal harian (on-demand)
-router.post(
-  "/schedules/on-demand",
-  [auth, adminAuth], // atau middleware auth Anda
-  adminController.createOnDemandSchedule
-);
+// --- Routes untuk Manajemen Konten ---
+router.post('/advantages', [auth, adminAuth], contentController.createAdvantage);
+router.put('/advantages/:id', [auth, adminAuth], contentController.updateAdvantage);
+router.delete('/advantages/:id', [auth, adminAuth], contentController.deleteAdvantage);
+
+router.post('/faqs', [auth, adminAuth], contentController.createFaq);
+router.put('/faqs/:id', [auth, adminAuth], contentController.updateFaq);
+router.delete('/faqs/:id', [auth, adminAuth], contentController.deleteFaq);
 
 module.exports = router;

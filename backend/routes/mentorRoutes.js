@@ -66,4 +66,20 @@ router.put(
   mentorController.cancelSchedule
 );
 
+router.get("/profile", [auth, mentorAuth], mentorController.getMyProfile);
+
+// Rute ini sekarang menerima 2 file: 'profile_picture' dan 'certificate'
+router.put(
+  "/profile",
+  [
+    auth,
+    mentorAuth,
+    upload.fields([
+      { name: "profile_picture", maxCount: 1 },
+      { name: "certificate", maxCount: 1 },
+    ]),
+  ],
+  mentorController.updateMyProfile
+);
+
 module.exports = router;
