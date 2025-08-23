@@ -43,7 +43,12 @@ const adminController = {
         password,
         role,
         phone_number,
-        payment_type, // salary_rate dihapus
+        payment_type,
+        // Ambil data baru
+        nickname,
+        city,
+        school,
+        notes,
       } = req.body;
       if (!full_name || !email || !password || !role) {
         return res
@@ -60,9 +65,10 @@ const adminController = {
       const salt = await bcrypt.genSalt(10);
       const password_hash = await bcrypt.hash(password, salt);
 
+      // Tambahkan kolom baru ke query INSERT
       const query = `
-        INSERT INTO users (full_name, email, password_hash, role, phone_number, payment_type)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO users (full_name, email, password_hash, role, phone_number, payment_type, nickname, city, school, notes)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING user_id, full_name, email, role;
       `;
       const newUser = await pool.query(query, [
@@ -72,6 +78,10 @@ const adminController = {
         role,
         phone_number,
         payment_type || "monthly",
+        nickname,
+        city,
+        school,
+        notes,
       ]);
       res
         .status(201)
@@ -85,8 +95,9 @@ const adminController = {
   async getUserById(req, res) {
     try {
       const { id } = req.params;
+      // Ambil juga data detail siswa di sini
       const query =
-        "SELECT user_id, full_name, email, role, phone_number FROM users WHERE user_id = $1";
+        "SELECT user_id, full_name, email, role, phone_number, nickname, city, school, notes FROM users WHERE user_id = $1";
       const { rows } = await pool.query(query, [id]);
       if (rows.length === 0) {
         return res.status(404).json({ message: "Pengguna tidak ditemukan." });
@@ -106,17 +117,24 @@ const adminController = {
         email,
         role,
         phone_number,
-        payment_type, // salary_rate dihapus
+        payment_type,
+        // Ambil data baru
+        nickname,
+        city,
+        school,
+        notes,
       } = req.body;
       if (!full_name || !email || !role) {
         return res
           .status(400)
           .json({ message: "Nama, email, dan peran wajib diisi." });
       }
+      // Tambahkan kolom baru ke query UPDATE
       const query = `
         UPDATE users 
-        SET full_name = $1, email = $2, role = $3, phone_number = $4, payment_type = $5
-        WHERE user_id = $6
+        SET full_name = $1, email = $2, role = $3, phone_number = $4, payment_type = $5,
+            nickname = $6, city = $7, school = $8, notes = $9
+        WHERE user_id = $10
         RETURNING user_id, full_name, email, role;
       `;
       const updatedUser = await pool.query(query, [
@@ -125,6 +143,10 @@ const adminController = {
         role,
         phone_number,
         payment_type || "monthly",
+        nickname,
+        city,
+        school,
+        notes,
         id,
       ]);
       if (updatedUser.rows.length === 0) {
@@ -239,11 +261,69 @@ const adminController = {
     }
   },
 
+  async getVerifiedPayments(req, res) {
+    try {
+      const { page = 1, search = "" } = req.query;
+      const limit = 10;
+      const offset = (page - 1) * limit;
+      const searchQuery = `%${search}%`;
+
+      // Query untuk mengambil data
+      const dataQuery = `
+            SELECT 
+                p.payment_id, p.verified_at,
+                s.full_name as student_name,
+                pkg.package_name,
+                m.full_name as mentor_name,
+                a.full_name as admin_name,
+                up.session_rate
+            FROM payments p
+            JOIN users s ON p.student_id = s.user_id
+            JOIN user_packages up ON p.user_package_id = up.user_package_id
+            JOIN packages pkg ON up.package_id = pkg.package_id
+            LEFT JOIN users m ON up.mentor_id = m.user_id
+            LEFT JOIN users a ON p.verified_by = a.user_id
+            WHERE p.status = 'verified' AND m.full_name ILIKE $1 -- <-- PERUBAHAN DI SINI
+            ORDER BY p.verified_at DESC
+            LIMIT $2 OFFSET $3;
+        `;
+
+      // Query untuk menghitung total data
+      const countQuery = `
+            SELECT COUNT(*) FROM payments p
+            JOIN users s ON p.student_id = s.user_id
+            LEFT JOIN user_packages up ON p.user_package_id = up.user_package_id
+            LEFT JOIN users m ON up.mentor_id = m.user_id
+            WHERE p.status = 'verified' AND m.full_name ILIKE $1; -- <-- PERUBAHAN DI SINI
+        `;
+
+      const dataResult = await pool.query(dataQuery, [
+        searchQuery,
+        limit,
+        offset,
+      ]);
+      const countResult = await pool.query(countQuery, [searchQuery]);
+
+      const totalItems = parseInt(countResult.rows[0].count, 10);
+      const totalPages = Math.ceil(totalItems / limit);
+
+      res.json({
+        payments: dataResult.rows,
+        totalPages: totalPages,
+        currentPage: parseInt(page, 10),
+      });
+    } catch (error) {
+      console.error("Error fetching verified payments:", error);
+      res.status(500).json({ message: "Server Error" });
+    }
+  },
+
   async getStudentDetails(req, res) {
     try {
       const { id } = req.params;
+      // Ambil semua kolom baru
       const query =
-        "SELECT user_id, full_name, email, phone_number FROM users WHERE user_id = $1";
+        "SELECT user_id, full_name, email, phone_number, nickname, city, school, notes FROM users WHERE user_id = $1";
       const { rows } = await pool.query(query, [id]);
 
       if (rows.length === 0) {

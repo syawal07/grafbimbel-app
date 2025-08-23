@@ -374,10 +374,33 @@ const mentorController = {
     `;
       await client.query(userQuery, [full_name, phone_number, mentorId]);
 
-      const existingProfile = await client.query(
-        "SELECT profile_picture_url, certificate_url FROM mentor_profiles WHERE mentor_id = $1",
-        [mentorId]
-      );
+      const profileQuery = `
+      INSERT INTO mentor_profiles (
+          mentor_id, nickname, date_of_birth, gender, domicile, last_education, 
+          major, expert_subjects, teachable_levels, teaching_experience, 
+          availability, max_teaching_hours, teaching_mode, bank_account_number, 
+          bank_name, id_card_number, profile_picture_url, certificate_url
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+      ON CONFLICT (mentor_id) 
+      DO UPDATE SET
+          nickname = EXCLUDED.nickname,
+          date_of_birth = EXCLUDED.date_of_birth,
+          gender = EXCLUDED.gender,
+          domicile = EXCLUDED.domicile,
+          last_education = EXCLUDED.last_education,
+          major = EXCLUDED.major,
+          expert_subjects = EXCLUDED.expert_subjects,
+          teachable_levels = EXCLUDED.teachable_levels,
+          teaching_experience = EXCLUDED.teaching_experience,
+          availability = EXCLUDED.availability,
+          max_teaching_hours = EXCLUDED.max_teaching_hours,
+          teaching_mode = EXCLUDED.teaching_mode,
+          bank_account_number = EXCLUDED.bank_account_number,
+          bank_name = EXCLUDED.bank_name,
+          id_card_number = EXCLUDED.id_card_number,
+          profile_picture_url = COALESCE(EXCLUDED.profile_picture_url, mentor_profiles.profile_picture_url),
+          certificate_url = COALESCE(EXCLUDED.certificate_url, mentor_profiles.certificate_url);
+    `;
 
       const subjectsArray = expert_subjects
         ? `{${expert_subjects
@@ -392,68 +415,26 @@ const mentorController = {
             .join(",")}}`
         : null;
 
-      if (existingProfile.rows.length > 0) {
-        const oldProfile = existingProfile.rows[0];
-        const profileQuery = `
-              UPDATE mentor_profiles SET
-                  nickname = $1, date_of_birth = $2, gender = $3, domicile = $4, last_education = $5, 
-                  major = $6, expert_subjects = $7, teachable_levels = $8, teaching_experience = $9, 
-                  availability = $10, max_teaching_hours = $11, teaching_mode = $12, bank_account_number = $13, 
-                  bank_name = $14, id_card_number = $15, 
-                  profile_picture_url = $16, 
-                  certificate_url = $17
-              WHERE mentor_id = $18;
-          `;
-        await client.query(profileQuery, [
-          nickname,
-          date_of_birth || null,
-          gender,
-          domicile,
-          last_education,
-          major,
-          subjectsArray,
-          levelsArray,
-          teaching_experience,
-          availability,
-          max_teaching_hours || null,
-          teaching_mode,
-          bank_account_number,
-          bank_name,
-          id_card_number,
-          new_profile_picture_url || oldProfile.profile_picture_url,
-          new_certificate_url || oldProfile.certificate_url,
-          mentorId,
-        ]);
-      } else {
-        const profileQuery = `
-              INSERT INTO mentor_profiles (
-                  mentor_id, nickname, date_of_birth, gender, domicile, last_education, 
-                  major, expert_subjects, teachable_levels, teaching_experience, 
-                  availability, max_teaching_hours, teaching_mode, bank_account_number, 
-                  bank_name, id_card_number, profile_picture_url, certificate_url
-              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18);
-          `;
-        await client.query(profileQuery, [
-          mentorId,
-          nickname,
-          date_of_birth || null,
-          gender,
-          domicile,
-          last_education,
-          major,
-          subjectsArray,
-          levelsArray,
-          teaching_experience,
-          availability,
-          max_teaching_hours || null,
-          teaching_mode,
-          bank_account_number,
-          bank_name,
-          id_card_number,
-          new_profile_picture_url,
-          new_certificate_url,
-        ]);
-      }
+      await client.query(profileQuery, [
+        mentorId,
+        nickname,
+        date_of_birth || null,
+        gender,
+        domicile,
+        last_education,
+        major,
+        subjectsArray,
+        levelsArray,
+        teaching_experience,
+        availability,
+        max_teaching_hours || null,
+        teaching_mode,
+        bank_account_number,
+        bank_name,
+        id_card_number,
+        new_profile_picture_url,
+        new_certificate_url,
+      ]);
 
       await client.query("COMMIT");
       res.json({ message: "Profil berhasil diperbarui." });

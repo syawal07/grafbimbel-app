@@ -47,6 +47,13 @@ router.get(
   [auth, adminAuth],
   adminController.getPendingPayments
 );
+
+router.get(
+  "/payments/verified",
+  [auth, adminAuth],
+  adminController.getVerifiedPayments
+);
+
 router.put(
   "/payments/:id/verify",
   [auth, adminAuth],
